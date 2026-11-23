@@ -1,0 +1,75 @@
+:root {
+  --bg: #f5f7fa;
+  --surface: #ffffff;
+  --surface-2: #f0f3f7;
+  --border: #e2e7ee;
+  --text: #0f172a;
+  --text-2: #475569;
+  --text-3: #64748b;
+  --primary: #0f766e;
+  --primary-hover: #115e59;
+  --primary-soft: #e6f4f2;
+  --on-primary: #ffffff;
+  --success: #15803d;
+  --success-soft: #e8f6ec;
+  --warning: #b45309;
+  --warning-soft: #fef3e2;
+  --danger: #b91c1c;
+  --canvas-top: #f8fafc;
+  --canvas-bottom: #e3e9f0;
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 14px;
+  --shadow-panel: 0 1px 2px rgb(15 23 42 / 6%), 0 4px 16px rgb(15 23 42 / 6%);
+  --shadow-float: 0 8px 24px rgb(15 23 42 / 14%);
+  --font-sans: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", "Source Han Sans SC", system-ui, sans-serif;
+  --font-num: "Segoe UI", Roboto, var(--font-sans);
+}
+
+[data-theme="dark"] {
+  --bg: #0b1120;
+  --surface: #111827;
+  --surface-2: #1a2333;
+  --border: #334155;
+  --text: #e5eaf1;
+  --text-2: #b4bfce;
+  --text-3: #9aa8bb;
+  --primary: #2dd4bf;
+  --primary-hover: #5eead4;
+  --primary-soft: #0f2f2c;
+  --on-primary: #042f2c;
+  --success: #4ade80;
+  --success-soft: #163b28;
+  --warning: #fbbf24;
+  --warning-soft: #3b2b11;
+  --danger: #f87171;
+  --canvas-top: #121a2b;
+  --canvas-bottom: #070b14;
+}
+
+[data-contrast="high"] {
+  --border: #64748b;
+  --text-2: var(--text);
+  --text-3: var(--text);
+  --shadow-panel: 0 1px 2px rgb(15 23 42 / 18%), 0 4px 16px rgb(15 23 42 / 18%);
+  --shadow-float: 0 8px 24px rgb(15 23 42 / 30%);
+}
+
+[data-contrast="high"] .side-panel { border-color: var(--text); }
+[data-contrast="high"] .topbar { border-bottom-width: 2px; }
+[data-contrast="high"] .workspace .side-panel { border-left-width: 2px; border-right-width: 2px; }
+[data-contrast="high"] .diag-label,
+[data-contrast="high"] .measure-label,
+[data-contrast="high"] .coord-label,
+[data-contrast="high"] .atom-label {
+  border-width: 2px;
+  box-shadow: 0 2px 8px rgb(15 23 42 / 45%);
+}
+[data-contrast="high"] .term-chip { border-width: 2px; font-weight: 700; }
+[data-contrast="high"] .toggle-row[aria-pressed="true"] .switch { outline: 2px solid var(--primary); outline-offset: 1px; }
+[data-contrast="high"] .badge { border: 1px solid currentColor; }
+
+/* 类别教学教室模式字号：仅对解说文本和标题增大，避免工具按钮尺寸被撑爆 */
+[data-mode="classroom"] .classroom-caption p { font-size: 28px; }
+[data-mode="classroom"] .classroom-caption strong { font-size: 26px; }
+[data-mode="classroom"] .classroom-header strong { font-size: 22px; }
