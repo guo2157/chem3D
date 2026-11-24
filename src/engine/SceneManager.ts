@@ -197,6 +197,7 @@ export class SceneManager {
       const labelEl = document.createElement('div');
       labelEl.className = 'measure-label';
       labelEl.textContent = `${distance.toFixed(3)} Å`;
+      labelEl.title = `两个原子中心之间的直线距离 ${distance.toFixed(3)} Å（埃）。1 Å = 10⁻¹⁰ m = 0.1 nm。`;
       const label = new CSS2DObject(labelEl);
       label.position.copy(pa).add(pb).multiplyScalar(0.5);
       this.measureGroup.add(label);
@@ -234,6 +235,7 @@ export class SceneManager {
     const info = document.createElement('div');
     info.className = 'coord-label';
     info.innerHTML = `配位数 <b>${neighbors.length}</b> · ${neighbors[0].distance.toFixed(3)} Å`;
+    info.title = `配位数 = 离中心原子最近的原子个数（共 ${neighbors.length} 个），最近邻距离 ${neighbors[0].distance.toFixed(3)} Å。`;
     const label = new CSS2DObject(info);
     label.position.copy(centerPos).add(new THREE.Vector3(0, radius * 2.2, 0));
     this.coordGroup.add(label);
@@ -357,7 +359,7 @@ export class SceneManager {
     const bonds = computeNearestNeighborBonds(this.atoms);
     if (bonds.length === 0) return;
 
-    const radius = structure.cell.a * (options.displayStyle === 'skeleton' ? 0.03 : 0.04);
+    const radius = this.bondRadius(structure, options.displayStyle);
     const geometry = new THREE.CylinderGeometry(1, 1, 1, window.innerWidth < 768 ? 8 : 14, 1, false);
     this.bondResources.push(geometry);
 
@@ -406,7 +408,17 @@ export class SceneManager {
       if (structure.id === 'fcc-cu') return Math.sqrt(2) * structure.cell.a / 4;
       return structure.cell.a / 2;
     }
-    return style === 'skeleton' ? structure.cell.a * 0.11 : structure.cell.a * 0.19;
+    // 球径略收小：金刚石 / ZnS / CaF₂ 的最近邻间距只有 0.433a，球太大会把键完全遮住。
+    return style === 'skeleton' ? structure.cell.a * 0.095 : structure.cell.a * 0.16;
+  }
+
+  /**
+   * 键半径与原子球半径成比例，保证"细棍连球"的层级：
+   * 球棍约为球半径的 9%，骨架约 13%（骨架球本身更小，键相对略粗以保持可见）。
+   * 之前固定取 a×0.04 / a×0.03，约为球半径的 21% / 27%，视觉上偏粗。
+   */
+  private bondRadius(structure: CrystalStructure, style: DisplayStyle): number {
+    return this.atomRadius(structure, style) * (style === 'skeleton' ? 0.13 : 0.09);
   }
 
   private worldPosition(atom: RenderedAtom, structure: CrystalStructure, extension: number): THREE.Vector3 {
@@ -446,6 +458,7 @@ export class SceneManager {
     const labelEl = document.createElement('div');
     labelEl.className = 'diag-label diag-body';
     labelEl.innerHTML = `体对角线 √3·a = <b>${(Math.sqrt(3) * structure.cell.a).toFixed(3)} Å</b>`;
+    labelEl.title = `立方晶胞体对角线 = √3·a = √3 × ${structure.cell.a} ≈ ${(Math.sqrt(3) * structure.cell.a).toFixed(3)} Å。体心立方中原子沿体对角线相切，故 4r = √3·a。`;
     const label = new CSS2DObject(labelEl);
     label.position.copy(start).add(end).multiplyScalar(0.5);
     this.content.add(label);
@@ -486,6 +499,7 @@ export class SceneManager {
         const labelEl = document.createElement('div');
         labelEl.className = 'diag-label diag-face';
         labelEl.innerHTML = `面对角线 √2·a = <b>${length.toFixed(3)} Å</b>`;
+        labelEl.title = `立方晶胞面对角线 = √2·a = √2 × ${structure.cell.a} ≈ ${length.toFixed(3)} Å。面心立方中原子沿面对角线相切，故 4r = √2·a。`;
         const label = new CSS2DObject(labelEl);
         label.position.copy(origin).add(t.end).multiplyScalar(0.5);
         this.content.add(label);
@@ -619,7 +633,10 @@ export class SceneManager {
 
   private applyCameraPreset(): void {
     if (!this.structure || !this.options) return;
-    const distance = this.structure.cell.a * this.options.extension * 3.8;
+    // 取景距离略拉远，让整个晶胞（含顶点原子球）完整落在画布内，不被底部工具栏压住。
+    const distance = this.structure.cell.a * this.options.extension * 4.5;
+    // 拉远后的距离会超过默认 maxDistance(40)，扩展到 2×2×2 / 3×3×3 时会被强行拉回，这里按晶胞大小放宽。
+    this.controls.maxDistance = Math.max(40, distance * 2);
     const directions: Record<CameraPreset, THREE.Vector3> = {
       textbook: new THREE.Vector3(1.1, 0.85, 1.3),
       a: new THREE.Vector3(1, 0, 0),
@@ -643,7 +660,8 @@ export class SceneManager {
     this.labelRenderer.setSize(width, height);
     this.perspective.aspect = width / height;
     this.perspective.updateProjectionMatrix();
-    const span = (this.structure?.cell.a ?? 3) * (this.options?.extension ?? 1) * 0.8;
+    // 立方体投影后对角线可达 √3·a ≈ 1.73a，半高取 1.05a 才不会在正交视图里裁切晶胞。
+    const span = (this.structure?.cell.a ?? 3) * (this.options?.extension ?? 1) * 1.05;
     this.orthographic.left = -span * width / height;
     this.orthographic.right = span * width / height;
     this.orthographic.top = span;

@@ -7,6 +7,7 @@ import { LessonDirectory } from '../components/teaching/LessonDirectory';
 import { CrystalViewport } from '../components/viewport/CrystalViewport';
 import { Inspector } from '../components/inspector/Inspector';
 import { ClassroomOverlay } from '../components/classroom/ClassroomOverlay';
+import { TipProvider } from '../components/common/Tooltip';
 import { bccLesson } from '../data/lessons';
 import { structureById } from '../data/structures';
 import { useAppStore } from '../store/useAppStore';
@@ -116,15 +117,17 @@ export default function App() {
   }
 
   return (
-    <div className="app-shell">
-      {store.mode !== 'classroom' && <TopBar modelName={structure.name} formula={structure.formula} verified={structure.metadata.status === 'verified'} />}
-      <div className="workspace">
-        {store.mode !== 'classroom' && store.leftOpen && (store.mode === 'teach' ? <LessonDirectory /> : <ModelLibrary />)}
-        <CrystalViewport structure={structure} />
-        {store.mode !== 'classroom' && store.rightOpen && <Inspector structure={structure} />}
+    <TipProvider>
+      <div className="app-shell">
+        {store.mode !== 'classroom' && <TopBar modelName={structure.name} formula={structure.formula} verified={structure.metadata.status === 'verified'} />}
+        <div className="workspace">
+          {store.mode !== 'classroom' && store.leftOpen && (store.mode === 'teach' ? <LessonDirectory /> : <ModelLibrary />)}
+          <CrystalViewport structure={structure} />
+          {store.mode !== 'classroom' && store.rightOpen && <Inspector structure={structure} />}
+        </div>
+        {store.mode === 'classroom' && <ClassroomOverlay />}
+        <HelpOverlay />
       </div>
-      {store.mode === 'classroom' && <ClassroomOverlay />}
-      <HelpOverlay />
-    </div>
+    </TipProvider>
   );
 }

@@ -51,7 +51,7 @@ export function HelpOverlay() {
             </div>
           ))}
         </dl>
-        <p className="help-note">在输入框、下拉框或按钮上聚焦时，相应按键按原意生效，不会被拦截。</p>
+        <p className="help-note">带虚线下划线的词语（如“晶胞体积”“Å”“配位数”）可悬停或聚焦查看释义。在输入框、下拉框或按钮上聚焦时，相应按键按原意生效，不会被拦截。</p>
       </div>
     </div>
   );

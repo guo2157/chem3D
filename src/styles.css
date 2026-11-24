@@ -275,6 +275,28 @@ svg { width: 18px; height: 18px; stroke-width: 1.8; }
 .calculation-card button { border: 0; padding: 4px 0; color: var(--primary); background: transparent; font-weight: 600; }
 .calculation-card.featured { border-color: color-mix(in srgb, var(--primary) 35%, var(--border)); background: var(--primary-soft); }
 
+/* 悬停 / 聚焦提示（Tooltip，气泡经 Portal 渲染到 body，不会被侧栏裁切） */
+.tip { border-bottom: 1px dashed color-mix(in srgb, var(--text-3) 70%, transparent); cursor: help; }
+.tip:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 2px; }
+.tip-bubble {
+  z-index: 100;
+  max-width: min(260px, 78vw); padding: 8px 10px;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--text); color: var(--bg);
+  font: 400 12px/1.55 var(--font-sans); white-space: normal; text-align: left;
+  box-shadow: var(--shadow-float);
+  transform-origin: var(--radix-tooltip-content-transform-origin);
+  animation: tip-in 140ms ease;
+}
+.tip-arrow { fill: var(--text); }
+@keyframes tip-in {
+  from { opacity: 0; transform: scale(.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tip-bubble { animation: none; }
+}
+
 .lesson-caption { max-width: min(460px, calc(100% - 320px)); position: absolute; top: 72px; left: 16px; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: color-mix(in srgb, var(--surface) 94%, transparent); box-shadow: var(--shadow-panel); }
 .lesson-caption header { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
 .lesson-caption header span { color: var(--primary); font-size: 12px; font-weight: 650; }

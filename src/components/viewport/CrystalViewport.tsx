@@ -9,9 +9,9 @@ import { StepPlayer } from '../teaching/StepPlayer';
 import { Narration } from '../teaching/Narration';
 import { buildCountingPhases } from '../../modules/counting';
 
-function QuickToggle({ label, pressed, onToggle, children }: { label: string; pressed: boolean; onToggle: () => void; children: React.ReactNode }) {
+function QuickToggle({ label, hint, pressed, onToggle, children }: { label: string; hint?: string; pressed: boolean; onToggle: () => void; children: React.ReactNode }) {
   return (
-    <button type="button" aria-pressed={pressed} aria-label={`${label}${pressed ? '，已开启' : ''}`} title={label} onClick={onToggle}>
+    <button type="button" aria-pressed={pressed} aria-label={`${label}${pressed ? '，已开启' : ''}`} title={hint ? `${label}：${hint}` : label} onClick={onToggle}>
       {children}
       <span>{label}</span>
       {pressed && <span className="toggle-corner" aria-hidden="true"><Check /></span>}
@@ -136,7 +136,7 @@ export function CrystalViewport({ structure }: { structure: CrystalStructure }) 
       {store.measureMode && (
         <div className="measure-banner" role="status">
           <strong>测量距离</strong>
-          <span>
+          <span title="测量两个原子中心之间的直线距离，结果单位为 Å（埃）：1 Å = 10⁻¹⁰ m = 0.1 nm。">
             {!store.measurePair[0] && '点击第 1 个原子'}
             {store.measurePair[0] && !store.measurePair[1] && '点击第 2 个原子'}
             {store.measurePair[0] && store.measurePair[1] && '再次点击可重新测量'}
@@ -148,10 +148,10 @@ export function CrystalViewport({ structure }: { structure: CrystalStructure }) 
       {!classroom && !teaching && !store.measureMode && store.countingStage === null && <div className="viewport-hint">拖动旋转 · 滚轮缩放 · 点击选择原子</div>}
       {!classroom && (
         <div className="camera-controls">
-          <select aria-label="观察方向" value={store.cameraPreset} onChange={(event) => store.setCameraPreset(event.target.value as typeof store.cameraPreset)}>
+          <select aria-label="观察方向" title="沿某个晶轴或晶向观察晶胞" value={store.cameraPreset} onChange={(event) => store.setCameraPreset(event.target.value as typeof store.cameraPreset)}>
             <option value="textbook">教材视角</option><option value="a">沿 a 轴</option><option value="b">沿 b 轴</option><option value="c">沿 c 轴</option><option value="110">沿 [110]</option><option value="111">沿 [111]</option>
           </select>
-          <button aria-pressed={store.orthographic} aria-label="切换透视与正交" onClick={() => store.setOrthographic(!store.orthographic)}>{store.orthographic ? '正交' : '透视'}</button>
+          <button aria-pressed={store.orthographic} aria-label="切换透视与正交" title={store.orthographic ? '正交投影：平行线保持平行，适合读几何关系' : '透视投影：近大远小，接近人眼观感'} onClick={() => store.setOrthographic(!store.orthographic)}>{store.orthographic ? '正交' : '透视'}</button>
         </div>
       )}
       {!classroom && (
@@ -162,10 +162,10 @@ export function CrystalViewport({ structure }: { structure: CrystalStructure }) 
       )}
       {!classroom && !teaching && (
         <div className="quick-toolbar" aria-label="画布快捷工具">
-          <QuickToggle label="标签" pressed={store.showLabels} onToggle={() => store.setShowLabels(!store.showLabels)}><Tags /></QuickToggle>
-          <QuickToggle label="晶胞" pressed={store.showCell} onToggle={() => store.setShowCell(!store.showCell)}><Cuboid /></QuickToggle>
-          <QuickToggle label="截断" pressed={store.truncate} onToggle={() => store.setTruncate(!store.truncate)}><Grid3X3 /></QuickToggle>
-          <QuickToggle label="对角线" pressed={store.showBodyDiagonal} onToggle={() => store.setShowBodyDiagonal(!store.showBodyDiagonal)}><ScanLine /></QuickToggle>
+          <QuickToggle label="标签" hint="在每个原子旁显示位点名称" pressed={store.showLabels} onToggle={() => store.setShowLabels(!store.showLabels)}><Tags /></QuickToggle>
+          <QuickToggle label="晶胞" hint="显示晶胞的 12 条棱" pressed={store.showCell} onToggle={() => store.setShowCell(!store.showCell)}><Cuboid /></QuickToggle>
+          <QuickToggle label="截断" hint="把边界上的原子按 1/8、1/4、1/2 比例截断" pressed={store.truncate} onToggle={() => store.setTruncate(!store.truncate)}><Grid3X3 /></QuickToggle>
+          <QuickToggle label="对角线" hint="显示体对角线 √3·a" pressed={store.showBodyDiagonal} onToggle={() => store.setShowBodyDiagonal(!store.showBodyDiagonal)}><ScanLine /></QuickToggle>
           <button type="button" aria-label="重置视角" title="重置视角" onClick={() => managerRef.current?.resetView()}><RotateCcw /><span>重置</span></button>
         </div>
       )}
