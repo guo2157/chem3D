@@ -58,6 +58,16 @@ export interface RenderedAtom {
   equivalentCopies: number;
 }
 
+/** 两个已渲染原子之间的化学键（最近邻连线）。 */
+export interface RenderedBond {
+  /** 起点原子在 RenderedAtom[] 中的下标 */
+  from: number;
+  /** 终点原子在 RenderedAtom[] 中的下标 */
+  to: number;
+  /** 两原子中心距离，单位与晶胞参数一致（Å） */
+  length: number;
+}
+
 export interface TeachingStep {
   id: string;
   title: string;

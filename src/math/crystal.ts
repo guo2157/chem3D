@@ -1,4 +1,4 @@
-import type { CrystalStructure, PositionType, RenderedAtom } from '../types/crystal';
+import type { CrystalStructure, PositionType, RenderedAtom, RenderedBond } from '../types/crystal';
 
 const EPSILON = 1e-8;
 
@@ -43,6 +43,42 @@ export function generateRenderedAtoms(structure: CrystalStructure, extension: 1 
     }
   }
   return atoms;
+}
+
+/**
+ * 在已渲染的原子之间找出最近邻键。
+ *
+ * 规则：取所有原子对中的最短间距 dMin，间距 ≤ dMin × (1 + tolerance) 的原子对视为成键。
+ * 对本项目的立方晶体，成键距离在各模型内是唯一的，且与次近邻间距相差 >10%，因此
+ * 5% 的容差既能容纳浮点误差，又不会误连次近邻：
+ *   - BCC / CsCl：体心原子 ↔ 8 个顶点原子（√3·a/2）
+ *   - 金刚石 / ZnS / CaF₂：√3·a/4
+ *   - NaCl / SC：a/2 或 a（沿棱）
+ *   - FCC：面心 ↔ 顶点与相邻面心（√2·a/2）
+ * 只在传入的原子之间成键，因此 1×1×1 时不会产生伸出晶胞之外的键。
+ */
+export function computeNearestNeighborBonds(atoms: RenderedAtom[], tolerance = 0.05): RenderedBond[] {
+  const distance = (a: RenderedAtom, b: RenderedAtom) =>
+    Math.hypot(a.cart[0] - b.cart[0], a.cart[1] - b.cart[1], a.cart[2] - b.cart[2]);
+
+  let shortest = Infinity;
+  for (let i = 0; i < atoms.length; i++) {
+    for (let j = i + 1; j < atoms.length; j++) {
+      const d = distance(atoms[i], atoms[j]);
+      if (d > EPSILON && d < shortest) shortest = d;
+    }
+  }
+  if (!Number.isFinite(shortest)) return [];
+
+  const limit = shortest * (1 + tolerance);
+  const bonds: RenderedBond[] = [];
+  for (let i = 0; i < atoms.length; i++) {
+    for (let j = i + 1; j < atoms.length; j++) {
+      const d = distance(atoms[i], atoms[j]);
+      if (d > EPSILON && d <= limit) bonds.push({ from: i, to: j, length: d });
+    }
+  }
+  return bonds;
 }
 
 export function particleCount(structure: CrystalStructure): number {

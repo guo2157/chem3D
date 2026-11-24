@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import type { CameraPreset, ColoringMode, CrystalStructure, DisplayStyle, PositionType, RenderedAtom } from '../types/crystal';
 import { elementColors, elementInk, positionColors } from '../data/structures';
-import { generateRenderedAtoms } from '../math/crystal';
+import { computeNearestNeighborBonds, generateRenderedAtoms } from '../math/crystal';
 
 export interface SceneOptions {
   extension: 1 | 2 | 3;
@@ -38,6 +38,8 @@ export class SceneManager {
   private readonly pointer = new THREE.Vector2();
   private readonly resizeObserver: ResizeObserver;
   private atomMeshes: THREE.InstancedMesh[] = [];
+  /** 化学键使用的几何体与材质，每次重建场景时需要手动释放。 */
+  private bondResources: { dispose(): void }[] = [];
   private atoms: RenderedAtom[] = [];
   private selectedOuter?: THREE.Mesh;
   private selectedInner?: THREE.Mesh;
@@ -303,14 +305,8 @@ export class SceneManager {
       new THREE.Plane(new THREE.Vector3(0, 0, -1), half),
     ] : [];
     const grouped = new Map<string, { color: string; atoms: RenderedAtom[] }>();
-    const mutedHex = '#94A3B8';
     for (const atom of this.atoms) {
-      const isMuted = Boolean(options.focus && options.focus !== 'all' && atom.positionType !== options.focus);
-      const atomColor = isMuted
-        ? mutedHex
-        : options.coloring === 'element'
-          ? elementColors[atom.element] ?? '#8A94A6'
-          : positionColors[atom.positionType];
+      const atomColor = this.atomColor(atom, options);
       const group = grouped.get(atomColor) ?? { color: atomColor, atoms: [] };
       group.atoms.push(atom);
       grouped.set(atomColor, group);
@@ -330,6 +326,8 @@ export class SceneManager {
       this.atomMeshes.push(mesh);
       this.content.add(mesh);
     }
+    // 堆积样式下原子球相切/相叠，键会被完全遮住，因此只在球棍与骨架样式下绘制。
+    if (options.displayStyle !== 'packing') this.buildBonds(structure, options, clippingPlanes);
     if (options.showCell) this.buildCells(structure, options.extension, options.highContrast);
     if (options.showBodyDiagonal) this.buildBodyDiagonal(structure, options.highContrast);
     if (options.showFaceDiagonal) this.buildFaceDiagonals(structure, options.highContrast);
@@ -338,6 +336,68 @@ export class SceneManager {
     if (options.showLabels) this.buildLabels(structure, options, radius);
     this.applyCameraPreset();
     this.invalidate();
+  }
+
+  /** 原子球（以及与之相连的键半段）的显示颜色：聚焦模式下非聚焦位置统一置灰。 */
+  private atomColor(atom: RenderedAtom, options: SceneOptions): string {
+    const isMuted = Boolean(options.focus && options.focus !== 'all' && atom.positionType !== options.focus);
+    if (isMuted) return '#94A3B8';
+    return options.coloring === 'element'
+      ? elementColors[atom.element] ?? '#8A94A6'
+      : positionColors[atom.positionType];
+  }
+
+  /**
+   * 绘制最近邻化学键（球棍 / 骨架样式）。
+   * 每条键是一根圆柱，从中点分为两半，每半取所连原子的颜色（双色分段）。
+   * 例如 BCC 的体心原子会与 8 个顶点原子各连一条键。
+   * 同色的键半段合并为一个 InstancedMesh，与原子球的绘制方式一致。
+   */
+  private buildBonds(structure: CrystalStructure, options: SceneOptions, clippingPlanes: THREE.Plane[]): void {
+    const bonds = computeNearestNeighborBonds(this.atoms);
+    if (bonds.length === 0) return;
+
+    const radius = structure.cell.a * (options.displayStyle === 'skeleton' ? 0.03 : 0.04);
+    const geometry = new THREE.CylinderGeometry(1, 1, 1, window.innerWidth < 768 ? 8 : 14, 1, false);
+    this.bondResources.push(geometry);
+
+    const segmentsByColor = new Map<string, { start: THREE.Vector3; end: THREE.Vector3 }[]>();
+    const addSegment = (color: string, start: THREE.Vector3, end: THREE.Vector3) => {
+      const list = segmentsByColor.get(color) ?? [];
+      list.push({ start, end });
+      segmentsByColor.set(color, list);
+    };
+    for (const bond of bonds) {
+      const atomA = this.atoms[bond.from];
+      const atomB = this.atoms[bond.to];
+      const pa = this.worldPosition(atomA, structure, options.extension);
+      const pb = this.worldPosition(atomB, structure, options.extension);
+      const mid = pa.clone().add(pb).multiplyScalar(0.5);
+      addSegment(this.atomColor(atomA, options), pa, mid);
+      addSegment(this.atomColor(atomB, options), pb, mid);
+    }
+
+    const yAxis = new THREE.Vector3(0, 1, 0);
+    const direction = new THREE.Vector3();
+    const center = new THREE.Vector3();
+    const scale = new THREE.Vector3();
+    const quaternion = new THREE.Quaternion();
+    const matrix = new THREE.Matrix4();
+    for (const [color, segments] of segmentsByColor) {
+      const material = new THREE.MeshPhongMaterial({ color, shininess: 40, specular: 0x6b7280, clippingPlanes });
+      this.bondResources.push(material);
+      const mesh = new THREE.InstancedMesh(geometry, material, segments.length);
+      segments.forEach((segment, index) => {
+        direction.subVectors(segment.end, segment.start);
+        const length = direction.length();
+        quaternion.setFromUnitVectors(yAxis, direction.divideScalar(length));
+        center.addVectors(segment.start, segment.end).multiplyScalar(0.5);
+        matrix.compose(center, quaternion, scale.set(radius, length, radius));
+        mesh.setMatrixAt(index, matrix);
+      });
+      mesh.instanceMatrix.needsUpdate = true;
+      this.content.add(mesh);
+    }
   }
 
   private atomRadius(structure: CrystalStructure, style: DisplayStyle): number {
@@ -376,10 +436,13 @@ export class SceneManager {
     const half = structure.cell.a / 2;
     const start = new THREE.Vector3(-half, -half, -half);
     const end = new THREE.Vector3(half, half, half);
-    this.content.add(new THREE.Line(
+    // 体对角线与体心—顶点的键共线，关闭深度测试并后绘制，避免被键的圆柱遮住。
+    const diagonal = new THREE.Line(
       new THREE.BufferGeometry().setFromPoints([start, end]),
-      new THREE.LineBasicMaterial({ color: 0xe11d48, linewidth: highContrast ? 3 : 2 }),
-    ));
+      new THREE.LineBasicMaterial({ color: 0xe11d48, linewidth: highContrast ? 3 : 2, depthTest: false }),
+    );
+    diagonal.renderOrder = 8;
+    this.content.add(diagonal);
     const labelEl = document.createElement('div');
     labelEl.className = 'diag-label diag-body';
     labelEl.innerHTML = `体对角线 √3·a = <b>${(Math.sqrt(3) * structure.cell.a).toFixed(3)} Å</b>`;
@@ -405,16 +468,19 @@ export class SceneManager {
       { label: '侧面 (ac)', end: new THREE.Vector3(+half, +half, -half) },
       { label: '侧面 (bc)', end: new THREE.Vector3(-half, +half, +half) },
     ];
+    // 面对角线在 FCC 中与顶点—面心的键共线，同样关闭深度测试避免被遮住。
     const material = new THREE.LineDashedMaterial({
       color: 0x8b5cf6,
       dashSize: 0.15,
       gapSize: 0.08,
       linewidth: highContrast ? 3 : 2,
+      depthTest: false,
     });
     let labelDrawn = false;
     for (const t of targets) {
       const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([origin, t.end]), material);
       line.computeLineDistances();
+      line.renderOrder = 8;
       this.content.add(line);
       if (!labelDrawn) {
         const labelEl = document.createElement('div');
@@ -646,6 +712,8 @@ export class SceneManager {
     });
     this.content.clear();
     this.atomMeshes = [];
+    this.bondResources.forEach((resource) => resource.dispose());
+    this.bondResources = [];
     this.content.rotation.set(0, 0, 0);
     this.labelGroup.rotation.set(0, 0, 0);
     this.measureGroup.rotation.set(0, 0, 0);
@@ -668,6 +736,8 @@ export class SceneManager {
     this.clearLabels();
     this.clearGroup(this.measureGroup);
     this.clearGroup(this.coordGroup);
+    this.bondResources.forEach((resource) => resource.dispose());
+    this.bondResources = [];
     this.renderer.dispose();
     this.renderer.domElement.remove();
     this.labelRenderer.domElement.remove();
