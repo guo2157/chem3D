@@ -81,17 +81,12 @@ export function Inspector({ structure }: { structure: CrystalStructure }) {
           <Tabs.Trigger value="calculate"><Calculator />计算</Tabs.Trigger>
         </Tabs.List>
         <Tabs.Content value="observe" className="tab-content">
+          <section className="control-section"><h3><Tip text="参考图质感使用高光球体、深灰金属杆件和白色背景，接近实物图片风格；标准外观沿用原有材质。外观只改变视觉样式，不影响任何晶体数据和计算。">外观</Tip></h3><Segmented label="外观" value={store.appearancePreset} onChange={store.setAppearancePreset} options={[{ value: 'standard', label: '标准' }, { value: 'reference', label: '参考图质感' }]} /></section>
           <section className="control-section"><h3><Tip text="球棍：原子画成小球、键画成短棍；堆积：原子按实际相切比例放大；骨架：只保留连线，便于观察几何结构。">显示样式</Tip></h3><Segmented label="显示样式" value={store.displayStyle} onChange={store.setDisplayStyle} options={[{ value: 'ball-stick', label: '球棍' }, { value: 'packing', label: '堆积' }, { value: 'skeleton', label: '骨架' }]} /></section>
           <section className="control-section"><h3><Tip text="按元素：不同元素不同颜色；按位置：按顶点 / 棱心 / 面心 / 体内着色，便于观察各类位置的贡献。">着色方式</Tip></h3><Segmented label="着色方式" value={store.coloring} onChange={store.setColoring} options={[{ value: 'element', label: '按元素' }, { value: 'position', label: '按位置' }]} /></section>
           <section className="control-section"><h3><Tip text="沿 a、b、c 三个方向把晶胞复制成 2×2×2 或 3×3×3，观察晶体的周期性排列。">晶胞扩展</Tip></h3><Segmented label="晶胞扩展" value={store.extension} onChange={store.setExtension} options={[{ value: 1, label: '1×1×1' }, { value: 2, label: '2×2×2' }, { value: 3, label: '3×3×3' }]} /></section>
           <ToggleRow label="截断显示" hint="把被晶胞边界切开的原子按比例截断，直观看到 1/8、1/2 等贡献" value={store.truncate} onChange={store.setTruncate} />
           <ToggleRow label="原子标签" hint="在每个原子旁显示位点名称" value={store.showLabels} onChange={store.setShowLabels} />
-          <ToggleRow
-            label="自动旋转"
-            hint={reducedMotion ? '系统已开启"减少动态效果"，自转已禁用' : undefined}
-            value={reducedMotion ? false : store.autoRotate}
-            onChange={(value) => { if (!reducedMotion) store.setAutoRotate(value); }}
-          />
           <p className="teaching-note">球体大小为教学示意，不代表原子真实边界。</p>
         </Tabs.Content>
         <Tabs.Content value="analyze" className="tab-content">

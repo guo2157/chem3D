@@ -1,14 +1,16 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
-import type { CameraPreset, ColoringMode, CrystalStructure, DisplayStyle, PositionType, RenderedAtom } from '../types/crystal';
+import type { AppearancePreset, CameraPreset, ColoringMode, CrystalStructure, DisplayStyle, PositionType, RenderedAtom } from '../types/crystal';
 import { elementColors, elementInk, positionColors } from '../data/structures';
+import { getElementVisualProfile, getVisualProfile } from './renderProfiles';
 import { computeNearestNeighborBonds, generateRenderedAtoms } from '../math/crystal';
 
 export interface SceneOptions {
   extension: 1 | 2 | 3;
   displayStyle: DisplayStyle;
   coloring: ColoringMode;
+  appearancePreset: AppearancePreset;
   truncate: boolean;
   showCell: boolean;
   showBodyDiagonal: boolean;
@@ -49,10 +51,30 @@ export class SceneManager {
   private raf = 0;
   private dampingFrames = 0;
   private pointerStart = { x: 0, y: 0, time: 0 };
+  // ── 晶体学方向自动旋转 ──
+  private autoRotationActive = false;
+  private autoRotationState: 'idle' | 'transitioning' | 'dwelling' = 'idle';
+  private autoRotationTimer = 0;
+  private autoRotationIndex = 0;
+  private readonly autoRotationSequence: CameraPreset[] = ['a', 'b', 'c', '110', '111'];
+  private autoRotationDwellMs = 2000;
+  private readonly autoRotationTransitionMs = 2000;
+  // ── 相机动画插值 ──
+  private cameraAnimDuration = 0;
+  private cameraAnimElapsed = 0;
+  private cameraAnimStartPos = new THREE.Vector3();
+  private cameraAnimEndPos = new THREE.Vector3();
+  private cameraAnimStartTarget = new THREE.Vector3();
+  private cameraAnimEndTarget = new THREE.Vector3();
+  private cameraAnimStartUp = new THREE.Vector3();
+  private cameraAnimEndUp = new THREE.Vector3();
+  private lastRenderTimestamp = 0;
 
   constructor(
     private readonly container: HTMLElement,
     private readonly onSelect: (atom: RenderedAtom | null) => void,
+    private readonly onAutoRotationChange?: (active: boolean) => void,
+    private readonly onDirectionChange?: (preset: CameraPreset) => void,
   ) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, window.innerWidth < 768 ? 1.5 : 2));
@@ -102,22 +124,27 @@ export class SceneManager {
     controls.dampingFactor = 0.08;
     controls.minDistance = 2;
     controls.maxDistance = 40;
-    controls.addEventListener('start', () => { this.dampingFrames = 45; this.invalidate(); });
+    controls.addEventListener('start', () => {
+      if (this.autoRotationActive) this.stopAutoRotation();
+      this.dampingFrames = 45;
+      this.invalidate();
+    });
     controls.addEventListener('change', () => { this.dampingFrames = Math.max(this.dampingFrames, 4); this.invalidate(); });
     controls.addEventListener('end', () => { this.dampingFrames = 35; this.invalidate(); });
     return controls;
   }
 
   setStructure(structure: CrystalStructure, options: SceneOptions): void {
+    if (this.autoRotationActive) this.stopAutoRotation();
     this.structure = structure;
     this.options = options;
-    this.rebuild();
+    this.rebuild(false);
   }
 
   updateOptions(options: SceneOptions): void {
     if (!this.structure) return;
     this.options = options;
-    this.rebuild();
+    this.rebuild(true);
   }
 
   setCamera(orthographic: boolean, preset: CameraPreset): void {
@@ -150,10 +177,13 @@ export class SceneManager {
     }
     const radius = this.atomRadius(this.structure, this.options.displayStyle);
     const position = this.worldPosition(atom, this.structure, this.options.extension);
-    const makeShell = (scale: number, color: number) => new THREE.Mesh(
-      new THREE.SphereGeometry(radius * scale, 24, 18),
-      new THREE.MeshBasicMaterial({ color, side: THREE.BackSide, depthTest: false, transparent: true, opacity: 0.95 }),
-    );
+    const makeShell = (scale: number, color: number) => {
+      const mat = new THREE.MeshBasicMaterial({ color, side: THREE.BackSide, depthTest: true, transparent: true, opacity: 0.95 });
+      mat.polygonOffset = true;
+      mat.polygonOffsetFactor = -2;
+      mat.polygonOffsetUnits = -2;
+      return new THREE.Mesh(new THREE.SphereGeometry(radius * scale, 24, 18), mat);
+    };
     this.selectedOuter?.removeFromParent();
     this.selectedInner?.removeFromParent();
     this.selectedOuter = makeShell(1.18, 0x0f766e);
@@ -290,12 +320,15 @@ export class SceneManager {
     }
   }
 
-  private rebuild(): void {
+  private rebuild(preserveCamera = true): void {
     if (!this.structure || !this.options) return;
+    const savedCameraPos = preserveCamera ? this.activeCamera.position.clone() : null;
+    const savedTarget = preserveCamera ? this.controls.target.clone() : null;
     this.disposeGroup();
     const { structure, options } = this;
     this.atoms = generateRenderedAtoms(structure, options.extension);
-    const radius = this.atomRadius(structure, options.displayStyle);
+    const isReference = options.appearancePreset === 'reference';
+    const baseRadius = this.atomRadius(structure, options.displayStyle);
     const sphere = new THREE.SphereGeometry(1, window.innerWidth < 768 ? 20 : 32, window.innerWidth < 768 ? 14 : 24);
     const half = options.extension * structure.cell.a / 2;
     const clippingPlanes = options.truncate ? [
@@ -306,21 +339,34 @@ export class SceneManager {
       new THREE.Plane(new THREE.Vector3(0, 0, 1), half),
       new THREE.Plane(new THREE.Vector3(0, 0, -1), half),
     ] : [];
-    const grouped = new Map<string, { color: string; atoms: RenderedAtom[] }>();
+    const grouped = new Map<string, { color: string; radiusScale: number; atoms: RenderedAtom[] }>();
     for (const atom of this.atoms) {
-      const atomColor = this.atomColor(atom, options);
-      const group = grouped.get(atomColor) ?? { color: atomColor, atoms: [] };
+      const color = this.atomColor(atom, options);
+      const vp = getElementVisualProfile(structure.id, options.appearancePreset, atom.element);
+      const key = `${color}|${vp.radiusScale.toFixed(3)}`;
+      const group = grouped.get(key) ?? { color, radiusScale: vp.radiusScale, atoms: [] };
       group.atoms.push(atom);
-      grouped.set(atomColor, group);
+      grouped.set(key, group);
     }
     this.atomMeshes = [];
     for (const group of grouped.values()) {
-      const material = new THREE.MeshPhongMaterial({ color: group.color, shininess: 55, specular: 0x6b7280, clippingPlanes });
+      const material = isReference
+        ? new THREE.MeshPhysicalMaterial({
+            color: group.color,
+            metalness: 0.02,
+            roughness: 0.22,
+            clearcoat: 0.8,
+            clearcoatRoughness: 0.12,
+            clippingPlanes,
+          })
+        : new THREE.MeshPhongMaterial({ color: group.color, shininess: 55, specular: 0x6b7280, clippingPlanes });
       const mesh = new THREE.InstancedMesh(sphere, material, group.atoms.length);
+      this.bondResources.push(material);
       const matrix = new THREE.Matrix4();
+      const visualRadius = baseRadius * group.radiusScale;
       group.atoms.forEach((atom, index) => {
         const position = this.worldPosition(atom, structure, options.extension);
-        matrix.compose(position, new THREE.Quaternion(), new THREE.Vector3(radius, radius, radius));
+        matrix.compose(position, new THREE.Quaternion(), new THREE.Vector3(visualRadius, visualRadius, visualRadius));
         mesh.setMatrixAt(index, matrix);
       });
       mesh.instanceMatrix.needsUpdate = true;
@@ -330,13 +376,25 @@ export class SceneManager {
     }
     // 堆积样式下原子球相切/相叠，键会被完全遮住，因此只在球棍与骨架样式下绘制。
     if (options.displayStyle !== 'packing') this.buildBonds(structure, options, clippingPlanes);
-    if (options.showCell) this.buildCells(structure, options.extension, options.highContrast);
+    if (options.showCell) this.buildCells(structure, options.extension, options.highContrast, options.appearancePreset);
     if (options.showBodyDiagonal) this.buildBodyDiagonal(structure, options.highContrast);
     if (options.showFaceDiagonal) this.buildFaceDiagonals(structure, options.highContrast);
     if (options.showAxes) this.buildAxes(structure, options.extension);
-    if (options.projection !== 'none') this.buildProjection(structure, options, radius);
-    if (options.showLabels) this.buildLabels(structure, options, radius);
-    this.applyCameraPreset();
+    if (options.projection !== 'none') this.buildProjection(structure, options, baseRadius);
+    if (options.showLabels) this.buildLabels(structure, options, baseRadius);
+    if (preserveCamera && savedCameraPos && savedTarget) {
+      this.activeCamera.position.copy(savedCameraPos);
+      this.controls.target.copy(savedTarget);
+      this.controls.update();
+    } else {
+      this.applyCameraPreset();
+    }
+    // reference 外观：近白色背景
+    if (isReference) {
+      this.scene.background = new THREE.Color(0xf8f8f8);
+    } else {
+      this.scene.background = null;
+    }
     this.invalidate();
   }
 
@@ -369,14 +427,21 @@ export class SceneManager {
       list.push({ start, end });
       segmentsByColor.set(color, list);
     };
+    const isRef = options.appearancePreset === 'reference';
+    const refProfile = isRef ? getVisualProfile(structure.id, options.appearancePreset) : null;
+    const refBondColor = refProfile?.bondColor ?? '#4B4B4B';
     for (const bond of bonds) {
       const atomA = this.atoms[bond.from];
       const atomB = this.atoms[bond.to];
       const pa = this.worldPosition(atomA, structure, options.extension);
       const pb = this.worldPosition(atomB, structure, options.extension);
-      const mid = pa.clone().add(pb).multiplyScalar(0.5);
-      addSegment(this.atomColor(atomA, options), pa, mid);
-      addSegment(this.atomColor(atomB, options), pb, mid);
+      if (isRef) {
+        addSegment(refBondColor, pa, pb);
+      } else {
+        const mid = pa.clone().add(pb).multiplyScalar(0.5);
+        addSegment(this.atomColor(atomA, options), pa, mid);
+        addSegment(this.atomColor(atomB, options), pb, mid);
+      }
     }
 
     const yAxis = new THREE.Vector3(0, 1, 0);
@@ -386,7 +451,14 @@ export class SceneManager {
     const quaternion = new THREE.Quaternion();
     const matrix = new THREE.Matrix4();
     for (const [color, segments] of segmentsByColor) {
-      const material = new THREE.MeshPhongMaterial({ color, shininess: 40, specular: 0x6b7280, clippingPlanes });
+      const material: THREE.Material = isRef
+        ? new THREE.MeshPhysicalMaterial({
+            color,
+            metalness: refProfile?.bondMetalness ?? 0.6,
+            roughness: refProfile?.bondRoughness ?? 0.5,
+            clippingPlanes,
+          })
+        : new THREE.MeshPhongMaterial({ color, shininess: 40, specular: 0x6b7280, clippingPlanes });
       this.bondResources.push(material);
       const mesh = new THREE.InstancedMesh(geometry, material, segments.length);
       segments.forEach((segment, index) => {
@@ -409,7 +481,7 @@ export class SceneManager {
       return structure.cell.a / 2;
     }
     // 球径略收小：金刚石 / ZnS / CaF₂ 的最近邻间距只有 0.433a，球太大会把键完全遮住。
-    return style === 'skeleton' ? structure.cell.a * 0.095 : structure.cell.a * 0.16;
+    return style === 'skeleton' ? structure.cell.a * 0.12 : structure.cell.a * 0.22;
   }
 
   /**
@@ -428,20 +500,84 @@ export class SceneManager {
     return new THREE.Vector3(atom.cart[0] - cx, atom.cart[2] - cz, atom.cart[1] - cy);
   }
 
-  private buildCells(structure: CrystalStructure, extension: number, highContrast: boolean): void {
-    const lineMaterial = new THREE.LineBasicMaterial({
-      color: highContrast ? 0x0f172a : 0x475569,
-      transparent: true,
-      opacity: highContrast ? 0.95 : 0.75,
-      linewidth: highContrast ? 3 : 2,
-    });
+  private buildCells(structure: CrystalStructure, extension: number, highContrast: boolean, appearance: AppearancePreset = 'standard'): void {
     const a = structure.cell.a;
-    for (let i = 0; i < extension; i++) for (let j = 0; j < extension; j++) for (let k = 0; k < extension; k++) {
-      const edges = new THREE.EdgesGeometry(new THREE.BoxGeometry(a, a, a));
-      const lines = new THREE.LineSegments(edges, lineMaterial);
-      lines.position.set((i + 0.5) * a - extension * a / 2, (k + 0.5) * a - extension * a / 2, (j + 0.5) * a - extension * a / 2);
-      this.content.add(lines);
+    const isReference = appearance === 'reference';
+    if (!isReference) {
+      const lineMaterial = new THREE.LineBasicMaterial({
+        color: highContrast ? 0x0f172a : 0x475569,
+        transparent: true,
+        opacity: highContrast ? 0.95 : 0.75,
+        linewidth: highContrast ? 3 : 2,
+      });
+      for (let i = 0; i < extension; i++) for (let j = 0; j < extension; j++) for (let k = 0; k < extension; k++) {
+        const edges = new THREE.EdgesGeometry(new THREE.BoxGeometry(a, a, a));
+        const lines = new THREE.LineSegments(edges, lineMaterial);
+        lines.position.set((i + 0.5) * a - extension * a / 2, (k + 0.5) * a - extension * a / 2, (j + 0.5) * a - extension * a / 2);
+        this.content.add(lines);
+      }
+      return;
     }
+    const profile = getVisualProfile(structure.id, appearance);
+    const edgeRadius = a * 0.045 * profile.cellEdgeRadiusScale;
+    const edgeColor = profile.cellEdgeColor;
+    const edgeSet = new Set();
+    const segments: [THREE.Vector3, THREE.Vector3][] = [];
+    const key = (x: number, y: number, z: number) => x.toFixed(6) + ',' + y.toFixed(6) + ',' + z.toFixed(6);
+    const addEdge = (p1: THREE.Vector3, p2: THREE.Vector3) => {
+      const k1 = key(p1.x, p1.y, p1.z);
+      const k2 = key(p2.x, p2.y, p2.z);
+      const ek = k1 < k2 ? k1 + '|' + k2 : k2 + '|' + k1;
+      if (edgeSet.has(ek)) return;
+      edgeSet.add(ek);
+      segments.push([p1.clone(), p2.clone()]);
+    };
+    for (let ix = 0; ix <= extension; ix++) {
+      for (let iy = 0; iy <= extension; iy++) {
+        for (let iz = 0; iz <= extension; iz++) {
+          const x = (ix - extension / 2) * a;
+          const y = (iy - extension / 2) * a;
+          const z = (iz - extension / 2) * a;
+          if (ix < extension) {
+            addEdge(new THREE.Vector3(x, z, y), new THREE.Vector3(x + a, z, y));
+          }
+          if (iy < extension) {
+            addEdge(new THREE.Vector3(x, z, y), new THREE.Vector3(x, z, y + a));
+          }
+          if (iz < extension) {
+            addEdge(new THREE.Vector3(x, z, y), new THREE.Vector3(x, z + a, y));
+          }
+        }
+      }
+    }
+    if (segments.length === 0) return;
+    const cylGeo = new THREE.CylinderGeometry(1, 1, 1, window.innerWidth < 768 ? 6 : 10, 1, false);
+    this.bondResources.push(cylGeo);
+    const cylMat = new THREE.MeshPhysicalMaterial({
+      color: edgeColor,
+      metalness: 0.6,
+      roughness: 0.5,
+    });
+    this.bondResources.push(cylMat);
+    const mesh = new THREE.InstancedMesh(cylGeo, cylMat, segments.length);
+    const yAxis = new THREE.Vector3(0, 1, 0);
+    const dir = new THREE.Vector3();
+    const cen = new THREE.Vector3();
+    const scl = new THREE.Vector3();
+    const quat = new THREE.Quaternion();
+    const mat4 = new THREE.Matrix4();
+    segments.forEach((seg: [THREE.Vector3, THREE.Vector3], index: number) => {
+      const start = seg[0];
+      const end = seg[1];
+      dir.subVectors(end, start);
+      var len = dir.length();
+      quat.setFromUnitVectors(yAxis, dir.divideScalar(len));
+      cen.addVectors(start, end).multiplyScalar(0.5);
+      mat4.compose(cen, quat, scl.set(edgeRadius, len, edgeRadius));
+      mesh.setMatrixAt(index, mat4);
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+    this.content.add(mesh);
   }
 
   private buildBodyDiagonal(structure: CrystalStructure, highContrast = false): void {
@@ -526,13 +662,6 @@ export class SceneManager {
       const arrow = new THREE.ArrowHelper(axis.dir, origin, length, axis.color, length * 0.18, length * 0.1);
       (arrow.line.material as THREE.LineBasicMaterial).linewidth = 2;
       this.content.add(arrow);
-      const labelEl = document.createElement('div');
-      labelEl.className = 'axis-label';
-      labelEl.style.setProperty('--axis-color', `#${axis.color.toString(16).padStart(6, '0')}`);
-      labelEl.textContent = axis.letter;
-      const label = new CSS2DObject(labelEl);
-      label.position.copy(origin).addScaledVector(axis.dir, length + 0.18);
-      this.content.add(label);
     }
   }
 
@@ -631,12 +760,10 @@ export class SceneManager {
     }
   }
 
-  private applyCameraPreset(): void {
-    if (!this.structure || !this.options) return;
-    // 取景距离略拉远，让整个晶胞（含顶点原子球）完整落在画布内，不被底部工具栏压住。
+  /** 计算给定预设的相机目标位置、up 向量和观察中心 */
+  private computeCameraPosition(preset: CameraPreset): { position: THREE.Vector3; up: THREE.Vector3; target: THREE.Vector3 } {
+    if (!this.structure || !this.options) throw new Error('No structure set');
     const distance = this.structure.cell.a * this.options.extension * 4.5;
-    // 拉远后的距离会超过默认 maxDistance(40)，扩展到 2×2×2 / 3×3×3 时会被强行拉回，这里按晶胞大小放宽。
-    this.controls.maxDistance = Math.max(40, distance * 2);
     const directions: Record<CameraPreset, THREE.Vector3> = {
       textbook: new THREE.Vector3(1.1, 0.85, 1.3),
       a: new THREE.Vector3(1, 0, 0),
@@ -645,12 +772,66 @@ export class SceneManager {
       '110': new THREE.Vector3(1, 0, 1),
       '111': new THREE.Vector3(1, 1, 1),
     };
-    this.activeCamera.position.copy(directions[this.cameraPreset].normalize().multiplyScalar(distance));
-    this.activeCamera.up.set(0, 1, 0);
-    if (this.cameraPreset === 'c') this.activeCamera.up.set(0, 0, -1);
-    this.controls.target.set(0, 0, 0);
+    const position = directions[preset].clone().normalize().multiplyScalar(distance);
+    const target = new THREE.Vector3(0, 0, 0);
+    const up = new THREE.Vector3(0, 1, 0);
+    if (preset === 'c') up.set(0, 0, -1);
+    return { position, up, target };
+  }
+
+  /** 同步 OrbitControls 状态到相机当前位置 */
+  private syncControls(): void {
+    this.controls.target.copy(new THREE.Vector3(0, 0, 0));
     this.controls.update();
+  }
+
+  private applyCameraPreset(animated = true): void {
+    if (!this.structure || !this.options) return;
+    const distance = this.structure.cell.a * this.options.extension * 4.5;
+    this.controls.maxDistance = Math.max(40, distance * 2);
+    const { position, up, target } = this.computeCameraPosition(this.cameraPreset);
+    if (animated) {
+      this.startCameraAnimation(position, up, target);
+    } else {
+      this.activeCamera.position.copy(position);
+      this.activeCamera.up.copy(up);
+      this.controls.target.copy(target);
+      this.syncControls();
+      this.invalidate();
+    }
+  }
+
+  /** 启动相机平滑动画 */
+  private startCameraAnimation(endPos: THREE.Vector3, endUp: THREE.Vector3, endTarget: THREE.Vector3): void {
+    this.cameraAnimStartPos.copy(this.activeCamera.position);
+    this.cameraAnimStartUp.copy(this.activeCamera.up);
+    this.cameraAnimStartTarget.copy(this.controls.target);
+    this.cameraAnimEndPos.copy(endPos);
+    this.cameraAnimEndUp.copy(endUp);
+    this.cameraAnimEndTarget.copy(endTarget);
+    this.cameraAnimDuration = this.autoRotationActive ? this.autoRotationTransitionMs : 800;
+    this.cameraAnimElapsed = 0;
+    this.lastRenderTimestamp = 0;
     this.invalidate();
+  }
+
+  /** 每帧更新相机动画 */
+  private updateCameraAnimation(dt: number): boolean {
+    if (this.cameraAnimElapsed >= this.cameraAnimDuration) return false;
+    this.cameraAnimElapsed += dt;
+    const t = this.cameraAnimElapsed >= this.cameraAnimDuration ? 1 : this.cameraAnimElapsed / this.cameraAnimDuration;
+    // easeInOutCubic
+    const ease = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    this.activeCamera.position.lerpVectors(this.cameraAnimStartPos, this.cameraAnimEndPos, ease);
+    this.activeCamera.up.copy(this.cameraAnimStartUp).lerp(this.cameraAnimEndUp, ease).normalize();
+    this.controls.target.lerpVectors(this.cameraAnimStartTarget, this.cameraAnimEndTarget, ease);
+    if (t >= 1) {
+      this.activeCamera.position.copy(this.cameraAnimEndPos);
+      this.activeCamera.up.copy(this.cameraAnimEndUp);
+      this.controls.target.copy(this.cameraAnimEndTarget);
+    }
+    this.syncControls();
+    return t < 1;
   }
 
   private resize(): void {
@@ -675,24 +856,85 @@ export class SceneManager {
     this.raf = requestAnimationFrame(this.render);
   }
 
-  private render = (): void => {
+  private render = (timestamp: number): void => {
     this.raf = 0;
-    if (this.options?.autoRotate) {
-      this.content.rotation.y += 0.003;
-      this.labelGroup.rotation.y = this.content.rotation.y;
-      this.measureGroup.rotation.y = this.content.rotation.y;
-      this.coordGroup.rotation.y = this.content.rotation.y;
-      this.highlightGroup.rotation.y = this.content.rotation.y;
-      this.dampingFrames = 2;
-    }
+    // 计算帧间隔
+    const dt = this.lastRenderTimestamp ? timestamp - this.lastRenderTimestamp : 0;
+    this.lastRenderTimestamp = timestamp;
+    // 相机动画
+    const animating = this.updateCameraAnimation(dt);
+    // 自动旋转状态机
+    if (this.autoRotationActive) this.updateAutoRotation(dt);
+    // 持续渲染条件：相机动画中 / 自动旋转中 / 阻尼衰减中
+    const needsLoop = animating || this.autoRotationActive || this.dampingFrames > 0;
     this.controls.update();
     this.renderer.render(this.scene, this.activeCamera);
     this.labelRenderer.render(this.scene, this.activeCamera);
-    if (this.dampingFrames > 0 || this.options?.autoRotate) {
-      this.dampingFrames--;
+    if (needsLoop) {
+      if (this.dampingFrames > 0) this.dampingFrames--;
       this.invalidate();
     }
   };
+
+  // ── 晶体学方向自动旋转公共接口 ──
+
+  /** 启动自动旋转序列 */
+  startAutoRotation(): void {
+    this.autoRotationActive = true;
+    this.autoRotationIndex = 0;
+    this.autoRotationState = 'idle';
+    this.autoRotationTimer = 0;
+    // 先过渡到序列第一个方向
+    this.cameraPreset = this.autoRotationSequence[0];
+    this.applyCameraPreset(true);
+    this.autoRotationState = 'transitioning';
+    this.onAutoRotationChange?.(true);
+    this.onDirectionChange?.(this.autoRotationSequence[0]);
+  }
+
+  /** 停止自动旋转 */
+  stopAutoRotation(): void {
+    if (!this.autoRotationActive) return;
+    this.autoRotationActive = false;
+    this.autoRotationState = 'idle';
+    this.autoRotationTimer = 0;
+    this.onAutoRotationChange?.(false);
+  }
+
+  get isAutoRotating(): boolean {
+    return this.autoRotationActive;
+  }
+
+  /** 设置停留时间（毫秒），范围 500~10000 */
+  setDwellMs(ms: number): void {
+    this.autoRotationDwellMs = Math.max(500, Math.min(10000, ms));
+  }
+
+  get dwellMs(): number {
+    return this.autoRotationDwellMs;
+  }
+
+  /** 自动旋转状态机：transitioning → dwelling → transitioning → … */
+  private updateAutoRotation(dt: number): void {
+    this.autoRotationTimer += dt;
+    if (this.autoRotationState === 'transitioning') {
+      if (this.autoRotationTimer >= this.autoRotationTransitionMs) {
+        this.autoRotationTimer = 0;
+        this.autoRotationState = 'dwelling';
+        // 同步控制器，确保停留期间 OrbitControls 知道当前相机状态
+        this.syncControls();
+      }
+    } else if (this.autoRotationState === 'dwelling') {
+      if (this.autoRotationTimer >= this.autoRotationDwellMs) {
+        this.autoRotationTimer = 0;
+        this.autoRotationIndex = (this.autoRotationIndex + 1) % this.autoRotationSequence.length;
+        this.cameraPreset = this.autoRotationSequence[this.autoRotationIndex];
+        this.applyCameraPreset(true);
+        this.autoRotationState = 'transitioning';
+        this.onDirectionChange?.(this.autoRotationSequence[this.autoRotationIndex]);
+      }
+    }
+  }
 
   private pick(event: PointerEvent): { atom: RenderedAtom; index: number } | null {
     if (this.atomMeshes.length === 0) return null;
@@ -744,6 +986,7 @@ export class SceneManager {
   }
 
   dispose(): void {
+    this.stopAutoRotation();
     cancelAnimationFrame(this.raf);
     this.resizeObserver.disconnect();
     this.controls.dispose();

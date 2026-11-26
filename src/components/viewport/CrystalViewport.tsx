@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef } from 'react';
-import { Check, Cuboid, Grid3X3, RotateCcw, ScanLine, Tags, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Check, Cuboid, Grid3X3, Pause, Play, RotateCcw, ScanLine, Tags, X } from 'lucide-react';
 import type { CrystalStructure, PositionType } from '../../types/crystal';
 import { SceneManager } from '../../engine/SceneManager';
 import { useAppStore } from '../../store/useAppStore';
@@ -58,6 +58,8 @@ export function CrystalViewport({ structure }: { structure: CrystalStructure }) 
   const hostRef = useRef<HTMLDivElement>(null);
   const managerRef = useRef<SceneManager>();
   const store = useAppStore();
+  const [autoRotating, setAutoRotating] = useState(false);
+  const [dwellMs, setDwellMsState] = useState(2000);
   const lesson = bccLesson[store.lessonStep];
   const countingPhases = useMemo(() => buildCountingPhases(structure), [structure]);
   const focus: PositionType | 'all' = useMemo(() => {
@@ -72,6 +74,7 @@ export function CrystalViewport({ structure }: { structure: CrystalStructure }) 
     extension: store.extension,
     displayStyle: store.displayStyle,
     coloring: store.coloring,
+    appearancePreset: store.appearancePreset,
     truncate: store.truncate,
     showCell: store.showCell,
     showBodyDiagonal: store.showBodyDiagonal,
@@ -82,7 +85,7 @@ export function CrystalViewport({ structure }: { structure: CrystalStructure }) 
     autoRotate: store.autoRotate,
     highContrast: store.highContrast,
     focus,
-  }), [store.extension, store.displayStyle, store.coloring, store.truncate, store.showCell, store.showBodyDiagonal, store.showFaceDiagonal, store.showAxes, store.projection, store.showLabels, store.autoRotate, store.highContrast, focus]);
+  }), [store.extension, store.displayStyle, store.coloring, store.appearancePreset, store.truncate, store.showCell, store.showBodyDiagonal, store.showFaceDiagonal, store.showAxes, store.projection, store.showLabels, store.autoRotate, store.highContrast, focus]);
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -90,11 +93,15 @@ export function CrystalViewport({ structure }: { structure: CrystalStructure }) 
       const state = useAppStore.getState();
       if (state.measureMode && atom) state.pushMeasureAtom(atom);
       else state.setSelectedAtom(atom);
+    }, (active) => setAutoRotating(active), (preset) => {
+      const state = useAppStore.getState();
+      state.setCameraPreset(preset);
     });
     return () => managerRef.current?.dispose();
   }, []);
 
-  useEffect(() => managerRef.current?.setStructure(structure, sceneOptions), [structure, sceneOptions]);
+  useEffect(() => managerRef.current?.setStructure(structure, sceneOptions), [structure]);
+  useEffect(() => { managerRef.current?.updateOptions(sceneOptions); }, [sceneOptions]);
   useEffect(() => managerRef.current?.setCamera(store.orthographic, store.cameraPreset), [store.orthographic, store.cameraPreset]);
   useEffect(() => managerRef.current?.selectAtom(store.selectedAtom), [store.selectedAtom, sceneOptions]);
   useEffect(() => managerRef.current?.setMeasure(store.measurePair[0], store.measurePair[1]), [store.measurePair, sceneOptions]);
@@ -129,6 +136,7 @@ export function CrystalViewport({ structure }: { structure: CrystalStructure }) 
     <main
       className="viewport"
       data-mode={store.mode}
+      data-appearance={store.appearancePreset}
       data-measure={store.measureMode ? 'true' : undefined}
       aria-label={`${structure.name} 三维晶胞画布。可拖动旋转，滚轮缩放，点击原子查看信息。`}
     >
@@ -146,12 +154,84 @@ export function CrystalViewport({ structure }: { structure: CrystalStructure }) 
         </div>
       )}
       {!classroom && !teaching && !store.measureMode && store.countingStage === null && <div className="viewport-hint">拖动旋转 · 滚轮缩放 · 点击选择原子</div>}
-      {!classroom && (
+      {!classroom && !teaching && (
+        <div className="camera-controls">
+          <div className="camera-row">
+            <div className="direction-buttons" role="group" aria-label="晶体学观察方向">
+              {([
+                { value: 'a' as const, label: '[100]' },
+                { value: 'b' as const, label: '[010]' },
+                { value: 'c' as const, label: '[001]' },
+                { value: '110' as const, label: '[110]' },
+                { value: '111' as const, label: '[111]' },
+              ] as const).map(({ value, label }) => (
+                <button
+                  key={value}
+                  type="button"
+                  aria-pressed={store.cameraPreset === value}
+                  aria-label={`观察方向 ${label}`}
+                  title={`沿 ${label} 方向观察晶胞`}
+                  onClick={() => {
+                    managerRef.current?.stopAutoRotation();
+                    store.setCameraPreset(value);
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className="view-controls">
+              <button
+                type="button"
+                aria-pressed={autoRotating}
+                aria-label={autoRotating ? '停止自动旋转' : '开始自动旋转'}
+                title={autoRotating ? '停止自动旋转' : `自动旋转：${['[100]','[010]','[001]','[110]','[111]'].join(' → ')} → …`}
+                onClick={() => {
+                  if (autoRotating) {
+                    managerRef.current?.stopAutoRotation();
+                  } else {
+                    store.setCameraPreset('a');
+                    setTimeout(() => managerRef.current?.startAutoRotation(), 50);
+                  }
+                }}
+              >
+                {autoRotating ? <Pause /> : <Play />}
+                <span>{autoRotating ? '停止' : '旋转'}</span>
+              </button>
+              <button
+                aria-pressed={store.orthographic}
+                aria-label="切换透视与正交"
+                title={store.orthographic ? '正交投影：平行线保持平行，适合读几何关系' : '透视投影：近大远小，接近人眼观感'}
+                onClick={() => store.setOrthographic(!store.orthographic)}
+              >
+                {store.orthographic ? '正交' : '透视'}
+              </button>
+            </div>
+          </div>
+          <div className="dwell-control" title="自动旋转时每个方向的停留时间">
+            <label htmlFor="dwell-slider">停留</label>
+            <input
+              id="dwell-slider"
+              type="range"
+              min={500}
+              max={10000}
+              step={500}
+              value={dwellMs}
+              onChange={(e) => {
+                const ms = Number(e.target.value);
+                setDwellMsState(ms);
+                managerRef.current?.setDwellMs(ms);
+              }}
+            />
+            <span className="dwell-value">{(dwellMs / 1000).toFixed(1)}s</span>
+          </div>
+        </div>
+      )}
+      {!classroom && teaching && (
         <div className="camera-controls">
           <select aria-label="观察方向" title="沿某个晶轴或晶向观察晶胞" value={store.cameraPreset} onChange={(event) => store.setCameraPreset(event.target.value as typeof store.cameraPreset)}>
-            <option value="textbook">教材视角</option><option value="a">沿 a 轴</option><option value="b">沿 b 轴</option><option value="c">沿 c 轴</option><option value="110">沿 [110]</option><option value="111">沿 [111]</option>
+            <option value="textbook">教材斜视</option><option value="a">正视 [100]</option><option value="b">侧视 [010]</option><option value="c">俯视 [001]</option><option value="110">对角视角 [110]</option><option value="111">体对角视角 [111]</option>
           </select>
-          <button aria-pressed={store.orthographic} aria-label="切换透视与正交" title={store.orthographic ? '正交投影：平行线保持平行，适合读几何关系' : '透视投影：近大远小，接近人眼观感'} onClick={() => store.setOrthographic(!store.orthographic)}>{store.orthographic ? '正交' : '透视'}</button>
         </div>
       )}
       {!classroom && (

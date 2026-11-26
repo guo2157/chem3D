@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { AppMode, CameraPreset, ColoringMode, DisplayStyle, RenderedAtom } from '../types/crystal';
+import type { AppMode, AppearancePreset, CameraPreset, ColoringMode, DisplayStyle, RenderedAtom } from '../types/crystal';
 
 export type MeasurePair = [RenderedAtom | null, RenderedAtom | null];
 export type ProjectionPlane = 'none' | 'xy' | 'xz' | 'yz';
@@ -24,6 +24,7 @@ interface AppState {
   autoRotate: boolean;
   extension: 1 | 2 | 3;
   cameraPreset: CameraPreset;
+  appearancePreset: AppearancePreset;
   orthographic: boolean;
   selectedAtom: RenderedAtom | null;
   lessonStep: number;
@@ -59,6 +60,7 @@ interface AppState {
   setAutoRotate: (value: boolean) => void;
   setExtension: (value: 1 | 2 | 3) => void;
   setCameraPreset: (preset: CameraPreset) => void;
+  setAppearancePreset: (preset: AppearancePreset) => void;
   setOrthographic: (value: boolean) => void;
   setSelectedAtom: (atom: RenderedAtom | null) => void;
   setLessonStep: (step: number) => void;
@@ -99,6 +101,7 @@ export const useAppStore = create<AppState>((set) => ({
   autoRotate: false,
   extension: 1,
   cameraPreset: 'textbook',
+  appearancePreset: 'standard',
   orthographic: false,
   selectedAtom: null,
   lessonStep: 0,
@@ -147,6 +150,7 @@ export const useAppStore = create<AppState>((set) => ({
   setAutoRotate: (autoRotate) => set({ autoRotate }),
   setExtension: (extension) => set({ extension, selectedAtom: null, measurePair: [null, null] }),
   setCameraPreset: (cameraPreset) => set({ cameraPreset }),
+  setAppearancePreset: (appearancePreset) => set({ appearancePreset }),
   setOrthographic: (orthographic) => set({ orthographic }),
   setSelectedAtom: (selectedAtom) => set({ selectedAtom }),
   setLessonStep: (lessonStep) => set({ lessonStep }),

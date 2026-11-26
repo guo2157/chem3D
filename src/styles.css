@@ -206,14 +206,31 @@ svg { width: 18px; height: 18px; stroke-width: 1.8; }
 /* 测量模式下，画布 cursor 换成十字 */
 .viewport[data-measure="true"] .scene-canvas { cursor: crosshair !important; }
 
+/* 参考图质感：白色/近白画布背景，与深色 UI 主题共存 */
+.viewport[data-appearance="reference"] .scene-host {
+  background: #f8f8f8;
+}
+.viewport[data-appearance="reference"] .scene-canvas {
+  /* canvas 透明 (alpha: true)，背景由 scene-host 承载 */
+}
+
 /* 分析操作卡片激活态 */
 .analysis-action[data-active="true"] { border-color: var(--primary); color: var(--primary); background: var(--primary-soft); }
 .analysis-action[data-active="true"] small { color: color-mix(in srgb, var(--primary) 80%, var(--text)); }
 .viewport-hint { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); padding: 4px 9px; color: var(--text-3); background: color-mix(in srgb, var(--surface) 78%, transparent); border-radius: 999px; font-size: 12px; pointer-events: none; }
-.camera-controls { position: absolute; top: 14px; right: 14px; display: flex; gap: 6px; }
+.camera-controls { position: absolute; top: 14px; right: 14px; display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
+.camera-row { display: flex; gap: 6px; align-items: center; }
 .camera-controls select, .camera-controls button { height: 36px; border: 1px solid var(--border); border-radius: 7px; color: var(--text); background: color-mix(in srgb, var(--surface) 92%, transparent); box-shadow: var(--shadow-panel); }
 .camera-controls select { padding: 0 30px 0 10px; }
 .camera-controls button { padding: 0 10px; }
+.dwell-control { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 7px; background: color-mix(in srgb, var(--surface) 92%, transparent); box-shadow: var(--shadow-panel); }
+.dwell-control label { font-size: 11px; color: var(--text-2); white-space: nowrap; }
+.dwell-control input[type="range"] { width: 64px; height: 4px; accent-color: var(--primary, #2563eb); }
+.dwell-value { font-family: var(--font-num); font-size: 11px; color: var(--text); min-width: 28px; text-align: right; }
+.direction-buttons { display: flex; gap: 3px; }
+.direction-buttons button { min-width: 44px; padding: 0 8px; font-family: var(--font-num); font-size: 12px; font-weight: 600; }
+.direction-buttons button[aria-pressed="true"] { color: var(--primary, #2563eb); border-color: var(--primary, #2563eb); background: var(--primary-soft, color-mix(in srgb, #2563eb 12%, transparent)); }
+.view-controls { display: flex; gap: 3px; margin-left: 6px; padding-left: 6px; border-left: 1px solid var(--border); }
 .legend { position: absolute; right: 14px; bottom: 82px; min-width: 134px; display: grid; gap: 4px; padding: 9px 11px; border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-radius: var(--radius); background: color-mix(in srgb, var(--surface) 88%, transparent); box-shadow: var(--shadow-panel); }
 .legend strong { margin-bottom: 2px; font-size: 12px; }
 .legend span { display: flex; align-items: center; gap: 7px; color: var(--text-2); font-size: 12px; }

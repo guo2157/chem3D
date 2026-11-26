@@ -91,3 +91,58 @@ describe('最近邻化学键', () => {
     expect(computeNearestNeighborBonds([])).toEqual([]);
   });
 });
+
+
+describe('ZnS 闪锌矿数据不变量', () => {
+  it('ZnS 1×1×1 渲染实例为 18', () => {
+    const znS = structureById('zns');
+    const atoms = generateRenderedAtoms(znS, 1);
+    expect(atoms).toHaveLength(18);
+  });
+
+  it('ZnS 晶胞粒子数为 8', () => {
+    const znS = structureById('zns');
+    expect(particleCount(znS)).toBe(8);
+  });
+
+  it('ZnS 最近邻键为 16 条，仅 Zn–S 无 Zn–Zn/S–S', () => {
+    const znS = structureById('zns');
+    const atoms = generateRenderedAtoms(znS, 1);
+    const bonds = computeNearestNeighborBonds(atoms);
+    expect(bonds).toHaveLength(16);
+    for (const bond of bonds) {
+      const elA = atoms[bond.from].element;
+      const elB = atoms[bond.to].element;
+      expect(new Set([elA, elB])).toEqual(new Set(['Zn', 'S']));
+    }
+  });
+
+  it('ZnS 最近邻键长一致', () => {
+    const znS = structureById('zns');
+    const atoms = generateRenderedAtoms(znS, 1);
+    const bonds = computeNearestNeighborBonds(atoms);
+    expect(bonds.length).toBeGreaterThan(0);
+    const first = bonds[0].length;
+    expect(bonds.every((bond) => Math.abs(bond.length - first) < 1e-8)).toBe(true);
+  });
+
+  it('ZnS 粒子数、体积、密度不依赖视觉参数', () => {
+    const znS = structureById('zns');
+    const count1 = particleCount(znS);
+    const vol1 = cellVolume(znS);
+    const rho1 = density(znS);
+    expect(particleCount(znS)).toBe(count1);
+    expect(cellVolume(znS)).toBeCloseTo(vol1, 10);
+    expect(density(znS)).toBeCloseTo(rho1, 10);
+  });
+});
+
+describe('晶胞唯一边框段数', () => {
+  const edgeSegmentCount = (extension: number): number => {
+    return 3 * extension * (extension + 1) ** 2;
+  };
+
+  it('1×1×1 → 12', () => expect(edgeSegmentCount(1)).toBe(12));
+  it('2×2×2 → 54', () => expect(edgeSegmentCount(2)).toBe(54));
+  it('3×3×3 → 144', () => expect(edgeSegmentCount(3)).toBe(144));
+});

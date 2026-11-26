@@ -5,6 +5,7 @@ export type DisplayStyle = 'ball-stick' | 'packing' | 'skeleton';
 export type ColoringMode = 'element' | 'position';
 export type AppMode = 'explore' | 'teach' | 'classroom';
 export type CameraPreset = 'textbook' | 'a' | 'b' | 'c' | '110' | '111';
+export type AppearancePreset = 'standard' | 'reference';
 
 export interface CellParameters {
   a: number;
